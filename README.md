@@ -35,6 +35,7 @@ wallctl set <file_or_dir> [--watch] [--interval N] [--quiet] [--force-refresh] [
 wallctl watch <file_or_dir> [--interval N] [--quiet]
 wallctl verify [--json]
 wallctl doctor [--json]
+wallctl restore-default [--quiet]
 wallctl restore [--latest | --path <backup_path>] [--quiet]
 wallctl stop-watch
 wallctl version
@@ -52,6 +53,16 @@ wallctl help
 ```bash
 wallctl set "/absolute/path/to/image" --sudo-managed-copy --force-refresh
 ```
+
+## Default Wallpaper Restore
+
+- `wallctl restore-default` restores the cached school default wallpaper.
+- On first use, `wallctl` auto-detects a default image name similar to `cchs-desktopWallpaper-default`.
+- If no direct match is found, it falls back to a readable active/managed wallpaper and caches that.
+- Cached default path is stored under `~/.local/state/wallctl/default/`.
+- Interactive mode now shows:
+  1. Restore default wallpaper
+  2. Set a new wallpaper
 
 ## Exit Codes
 

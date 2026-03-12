@@ -14,6 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 STATE_DIR="${WALLCTL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/wallctl}"
 BACKUP_DIR="$STATE_DIR/backups"
+DEFAULT_DIR="$STATE_DIR/default"
+DEFAULT_WALLPAPER_META="$DEFAULT_DIR/default.json"
 PID_FILE="$STATE_DIR/watch.pid"
 LOG_FILE="$STATE_DIR/watch.log"
 
@@ -81,6 +83,117 @@ select_image_from_dir() {
 validate_image_readable() {
   local p="$1"
   sips -g format "$p" >/dev/null 2>&1
+}
+
+file_ext_lower() {
+  local p="$1"
+  local base ext
+  base="$(basename "$p")"
+  if [[ "$base" == *.* ]]; then
+    ext="${base##*.}"
+    printf '%s\n' "${ext:l}"
+  else
+    printf 'jpg\n'
+  fi
+}
+
+is_school_default_name() {
+  local p="$1"
+  local base normalized
+  base="$(basename "$p")"
+  # Normalize separators/case so variants like cchs-desktopWallpaper-default still match.
+  normalized="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
+  [[ "$normalized" == *"cchsdesktopwallpaperdefault"* ]]
+}
+
+default_wallpaper_path() {
+  [[ -d "$DEFAULT_DIR" ]] || return 1
+  local p
+  p="$(find "$DEFAULT_DIR" -maxdepth 1 -type f -name 'default-school-wallpaper.*' | sort | head -n 1)"
+  [[ -n "$p" ]] || return 1
+  printf '%s\n' "$p"
+}
+
+find_school_default_candidate() {
+  # Detection priority is deterministic so first-run capture is predictable.
+  managed_state
+  local active
+  active="$(get_active_path_posix)"
+
+  if [[ -n "$MANAGED_OVERRIDE_PATH" && -f "$MANAGED_OVERRIDE_PATH" ]] && is_school_default_name "$MANAGED_OVERRIDE_PATH"; then
+    printf '%s\n' "$MANAGED_OVERRIDE_PATH"
+    return 0
+  fi
+
+  if [[ -n "$active" && -f "$active" ]] && is_school_default_name "$active"; then
+    printf '%s\n' "$active"
+    return 0
+  fi
+
+  local dirs=(
+    "/usr/local/jamfconnect"
+    "/Library/Desktop Pictures"
+    "/System/Library/Desktop Pictures"
+    "$HOME/Pictures"
+    "$HOME/Desktop"
+  )
+  local d
+  for d in "${dirs[@]}"; do
+    [[ -d "$d" ]] || continue
+    local hit
+    hit="$(
+      find "$d" -maxdepth 4 -type f \
+        \( -iname '*cchs*desktop*wallpaper*default*.jpg' -o -iname '*cchs*desktop*wallpaper*default*.jpeg' -o -iname '*cchs*desktop*wallpaper*default*.png' -o -iname '*cchs*desktop*wallpaper*default*.webp' -o -iname '*cchs*desktop*wallpaper*default*.heic' -o -iname '*cchs*desktop*wallpaper*default*.tif' -o -iname '*cchs*desktop*wallpaper*default*.tiff' \) \
+        | sort | head -n 1
+    )"
+    if [[ -n "$hit" && -f "$hit" ]]; then
+      printf '%s\n' "$hit"
+      return 0
+    fi
+  done
+
+  if [[ -n "$active" && -f "$active" ]] && validate_image_readable "$active"; then
+    printf '%s\n' "$active"
+    return 0
+  fi
+
+  if [[ -n "$MANAGED_OVERRIDE_PATH" && -f "$MANAGED_OVERRIDE_PATH" ]] && validate_image_readable "$MANAGED_OVERRIDE_PATH"; then
+    printf '%s\n' "$MANAGED_OVERRIDE_PATH"
+    return 0
+  fi
+
+  return 1
+}
+
+capture_default_wallpaper_if_missing() {
+  local existing
+  existing="$(default_wallpaper_path 2>/dev/null || true)"
+  if [[ -n "$existing" && -f "$existing" ]]; then
+    printf '%s\n' "$existing"
+    return 0
+  fi
+
+  ensure_state_dir || return 1
+
+  local candidate
+  candidate="$(find_school_default_candidate 2>/dev/null || true)"
+  if [[ -z "$candidate" || ! -f "$candidate" ]]; then
+    err "could not find a default wallpaper candidate"
+    return 1
+  fi
+
+  local ext out captured_at
+  ext="$(file_ext_lower "$candidate")"
+  out="$DEFAULT_DIR/default-school-wallpaper.$ext"
+  cp -f "$candidate" "$out" || {
+    err "failed to cache detected default wallpaper: $candidate"
+    return 1
+  }
+  captured_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  cat > "$DEFAULT_WALLPAPER_META" <<EOF
+{"source_path":"$(json_escape "$candidate")","captured_at":"$captured_at"}
+EOF
+  printf '%s\n' "$out"
 }
 
 resolve_input_image() {
@@ -325,7 +438,7 @@ apply_managed_with_verify() {
 }
 
 ensure_state_dir() {
-  mkdir -p "$STATE_DIR" "$BACKUP_DIR"
+  mkdir -p "$STATE_DIR" "$BACKUP_DIR" "$DEFAULT_DIR"
 }
 
 latest_backup_path() {
@@ -421,6 +534,7 @@ Usage:
   wallctl watch <file_or_dir> [--interval N] [--quiet]
   wallctl verify [--json]
   wallctl doctor [--json]
+  wallctl restore-default [--quiet]
   wallctl restore [--latest | --path <backup_path>] [--quiet]
   wallctl stop-watch
   wallctl version
@@ -435,48 +549,78 @@ HELP
 }
 
 cmd_interactive() {
+  local choice=""
   local input=""
   local rc=0
 
-  if [[ -t 0 ]]; then
-    printf 'Enter image file or directory path: '
-  fi
-
-  IFS= read -r input
-  input="${input#"${input%%[![:space:]]*}"}"
-  input="${input%"${input##*[![:space:]]}"}"
-  if [[ -z "$input" ]]; then
-    err "no path provided"
+  if [[ ! -t 0 ]]; then
+    err "interactive mode requires a terminal"
     return $EXIT_USAGE
   fi
 
-  cmd_set "$input" --force-refresh
-  rc=$?
-  if [[ "$rc" -eq 0 ]]; then
-    return 0
-  fi
+  printf 'Select an option:\n\n'
+  printf '1. Restore default wallpaper\n'
+  printf '2. Set a new wallpaper\n\n'
+  printf 'Enter choice [1-2]: '
+  IFS= read -r choice
+  choice="${choice#"${choice%%[![:space:]]*}"}"
+  choice="${choice%"${choice##*[![:space:]]}"}"
 
-  managed_state
-  if [[ "$rc" -eq "$EXIT_BLOCKED" && "$MANAGED_LOCKED" -eq 1 && -n "$MANAGED_OVERRIDE_PATH" ]]; then
-    if [[ ! -t 0 ]]; then
-      err "managed policy blocked this non-interactive run; rerun in Terminal to allow sudo-managed retry"
-      return $rc
-    fi
-    printf 'Managed policy detected. Retry with sudo-managed copy? [Y/n]: '
-    local ans
-    IFS= read -r ans
-    case "${ans:l}" in
-      ""|y|yes)
-        cmd_set "$input" --force-refresh --force-managed-target --sudo-managed-copy
-        return $?
-        ;;
-      *)
-        return $rc
-        ;;
-    esac
-  fi
+  case "$choice" in
+    1)
+      cmd_restore_default --force-refresh
+      rc=$?
+      if [[ "$rc" -eq "$EXIT_BLOCKED" ]]; then
+        managed_state
+        if [[ "$MANAGED_LOCKED" -eq 1 && -n "$MANAGED_OVERRIDE_PATH" ]]; then
+          printf 'Managed policy detected. Retry with sudo-managed copy? [Y/n]: '
+          local ans
+          IFS= read -r ans
+          case "${ans:l}" in
+            ""|y|yes)
+              cmd_restore_default --force-refresh --sudo-managed-copy
+              return $?
+              ;;
+          esac
+        fi
+      fi
+      return "$rc"
+      ;;
+    2)
+      printf 'Enter image file or directory path: '
+      IFS= read -r input
+      input="${input#"${input%%[![:space:]]*}"}"
+      input="${input%"${input##*[![:space:]]}"}"
+      if [[ -z "$input" ]]; then
+        err "no path provided"
+        return $EXIT_USAGE
+      fi
 
-  return $rc
+      cmd_set "$input" --force-refresh
+      rc=$?
+      if [[ "$rc" -eq 0 ]]; then
+        return 0
+      fi
+
+      managed_state
+      if [[ "$rc" -eq "$EXIT_BLOCKED" && "$MANAGED_LOCKED" -eq 1 && -n "$MANAGED_OVERRIDE_PATH" ]]; then
+        printf 'Managed policy detected. Retry with sudo-managed copy? [Y/n]: '
+        local ans
+        IFS= read -r ans
+        case "${ans:l}" in
+          ""|y|yes)
+            cmd_set "$input" --force-refresh --force-managed-target --sudo-managed-copy
+            return $?
+            ;;
+        esac
+      fi
+      return "$rc"
+      ;;
+    *)
+      err "invalid choice: ${choice:-<empty>}"
+      return $EXIT_USAGE
+      ;;
+  esac
 }
 
 refresh_wallpaper_services() {
@@ -877,6 +1021,64 @@ cmd_doctor() {
   return $EXIT_OK
 }
 
+cmd_restore_default() {
+  local use_sudo=0
+  local force_refresh=0
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --quiet) QUIET=1 ;;
+      --sudo-managed-copy) use_sudo=1 ;;
+      --force-refresh) force_refresh=1 ;;
+      -h|--help) print_help; return $EXIT_OK ;;
+      --*) err "unknown option: $1"; return $EXIT_USAGE ;;
+      *) err "unexpected argument: $1"; return $EXIT_USAGE ;;
+    esac
+    shift
+  done
+
+  require_cmds osascript sips plutil shasum || return $EXIT_BLOCKED
+
+  local default_path
+  default_path="$(capture_default_wallpaper_if_missing)" || return $EXIT_BLOCKED
+  [[ -f "$default_path" ]] || { err "default wallpaper cache missing: $default_path"; return $EXIT_BLOCKED; }
+
+  # Restore uses existing set-path logic so managed/unmanaged behavior stays consistent.
+  log "restoring default wallpaper from: $default_path"
+
+  local set_rc
+  if [[ "$use_sudo" -eq 1 ]]; then
+    cmd_set "$default_path" --quiet --force-refresh --force-managed-target --sudo-managed-copy
+  elif [[ "$force_refresh" -eq 1 ]]; then
+    cmd_set "$default_path" --quiet --force-refresh
+  else
+    cmd_set "$default_path" --quiet
+  fi
+  set_rc=$?
+  [[ "$set_rc" -eq 0 ]] || return "$set_rc"
+
+  managed_state
+  if [[ "$MANAGED_LOCKED" -eq 1 && -n "$MANAGED_OVERRIDE_PATH" && -f "$MANAGED_OVERRIDE_PATH" ]]; then
+    local expected_hash actual_hash
+    expected_hash="$(shasum -a 256 "$default_path" | awk '{print $1}')"
+    actual_hash="$(shasum -a 256 "$MANAGED_OVERRIDE_PATH" | awk '{print $1}')"
+    if [[ "$expected_hash" != "$actual_hash" ]]; then
+      err "default restore verification failed: managed target content mismatch"
+      return $EXIT_APPLY_FAILED
+    fi
+  else
+    local active
+    active="$(get_active_path_posix)"
+    if [[ -n "$active" && "$active" != "$default_path" && "${WALLCTL_LAST_APPLY_UNVERIFIED:-0}" -ne 1 ]]; then
+      err "default restore verification failed: active wallpaper path mismatch"
+      return $EXIT_APPLY_FAILED
+    fi
+  fi
+
+  log "default wallpaper restore complete"
+  return $EXIT_OK
+}
+
 cmd_restore() {
   local restore_path=""
   local use_latest=0
@@ -932,6 +1134,7 @@ main() {
     watch) cmd_watch "$@" ;;
     verify) cmd_verify "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    restore-default) cmd_restore_default "$@" ;;
     restore) cmd_restore "$@" ;;
     stop-watch) stop_watch ;;
     version) printf '%s\n' "$VERSION" ;;

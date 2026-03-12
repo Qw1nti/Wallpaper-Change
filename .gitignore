@@ -1,1 +1,4 @@
 dist/
+wallctl-data/
+*.wallpaper-cache
+cchs-desktopWallpaper-default*
