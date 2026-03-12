@@ -2,12 +2,17 @@
 
 Portable macOS terminal app for setting desktop wallpaper from either an image file path or a directory.
 
-## Install
+## Install (Clone -> Build -> Install)
 
 ```bash
-chmod +x wallctl install.sh uninstall.sh
+git clone https://github.com/Qw1nti/Wallpaper-Change.git
+cd Wallpaper-Change
+chmod +x wallctl build.sh install.sh uninstall.sh
+./build.sh
 ./install.sh
 ```
+
+`install.sh` will install the built artifact from `dist/wallctl` when available.
 
 ## Quick Start
 
