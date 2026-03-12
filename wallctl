@@ -135,13 +135,6 @@ apply_unmanaged_once() {
   return 0
 }
 
-verify_active_matches() {
-  local expected="$1"
-  local active
-  active="$(get_active_path_posix)"
-  [[ -n "$active" && "$active" == "$expected" ]]
-}
-
 apply_unmanaged_with_verify() {
   local img_path="$1"
   local phase="${2:-normal}"

@@ -2,142 +2,63 @@
 
 Portable macOS terminal app for setting desktop wallpaper from either an image file path or a directory.
 
-## Features
-
-- Single CLI: `wallctl`
-- Supports `set`, `verify`, `watch`, `restore`, `doctor`, `stop-watch`, `version`
-- Accepts file or directory input
-- Deterministic directory selection:
-  1. extensions: `jpg jpeg png heic webp tif tiff`
-  2. newest by mtime
-  3. lexical tie-break
-- Auto-detects managed wallpaper policy (`com.apple.desktop`) and adapts when possible
-- Optional self-heal mode (`watch`) for policy drift
-
 ## Install
 
-From this repo:
-
 ```bash
-chmod +x wallctl install.sh uninstall.sh scripts/*.sh
+chmod +x wallctl install.sh uninstall.sh
 ./install.sh
 ```
 
 ## Quick Start
 
-One-command interactive mode:
+Run interactive mode:
 
 ```bash
 wallctl
 ```
 
-It will prompt for an image file/directory path and do the full apply flow automatically.
-
-Set wallpaper from a file:
+Or direct command:
 
 ```bash
-wallctl set "/absolute/path/to/image.jpg"
+wallctl set "/absolute/path/to/image-or-directory" --force-refresh
 ```
 
-Force a hard wallpaper refresh (cache + agents):
+## Commands
 
 ```bash
-wallctl set "/absolute/path/to/image.jpg" --force-refresh
-```
-
-Set wallpaper from a directory (auto-select newest valid image):
-
-```bash
-wallctl set "/absolute/path/to/images-directory"
-```
-
-Verify status:
-
-```bash
-wallctl verify
-```
-
-Doctor diagnostics:
-
-```bash
-wallctl doctor
-```
-
-JSON output:
-
-```bash
-wallctl verify --json
-wallctl doctor --json
-```
-
-## Watch mode
-
-Foreground:
-
-```bash
-wallctl watch "/absolute/path/to/image-or-dir" --interval 15
-```
-
-Background from `set`:
-
-```bash
-wallctl set "/absolute/path/to/image-or-dir" --watch --interval 15
-```
-
-Stop watcher:
-
-```bash
+wallctl set <file_or_dir> [--watch] [--interval N] [--quiet] [--force-refresh] [--sudo-managed-copy] [--force-managed-target]
+wallctl watch <file_or_dir> [--interval N] [--quiet]
+wallctl verify [--json]
+wallctl doctor [--json]
+wallctl restore [--latest | --path <backup_path>] [--quiet]
 wallctl stop-watch
+wallctl version
+wallctl help
 ```
 
-## Managed-policy helper
+## Managed/Jamf Notes
 
-If `wallctl doctor` reports managed path not writable, retry with sudo-managed copy:
+- `wallctl` auto-detects locked managed wallpaper policy (`com.apple.desktop`).
+- If policy points to a Jamf-style override target, `wallctl set` automatically applies through that target.
+- If your source format differs from the managed target extension, `wallctl` auto-converts before apply.
+- A built-in stabilization second-pass is run for Jamf-default policies.
+- If permissions are blocked, retry in Terminal with:
 
 ```bash
-wallctl set "/absolute/path/to/image.jpg" --sudo-managed-copy --force-refresh
+wallctl set "/absolute/path/to/image" --sudo-managed-copy --force-refresh
 ```
 
-If your Mac is managed and you want to always write/apply through the managed override path:
+## Exit Codes
 
-```bash
-wallctl set "/absolute/path/to/image.jpg" --force-managed-target --sudo-managed-copy --force-refresh
-```
+- `0` success
+- `1` usage/input error
+- `2` permission/policy blocked
+- `3` apply attempted but verification failed
 
-Jamf default detection is automatic: if a locked managed override path looks like a JamfConnect wallpaper target, `wallctl set` will automatically apply through that managed path.
-If the managed target extension differs from your source (for example `.webp` source to `.jpg` managed target), `wallctl` automatically converts to the target format before applying.
-For managed/Jamf paths, `wallctl` also performs an internal post-apply stabilization pass (timed re-apply) so you typically only need to run once.
-For Jamf-default policies specifically, `wallctl` now performs an automatic delayed second managed apply pass in the same command (to replace manual “run it twice” behavior).
+## Repo Policy
 
-## Restore
-
-Restore latest backup:
-
-```bash
-wallctl restore --latest
-```
-
-Restore specific backup:
-
-```bash
-wallctl restore --path "/path/to/backup.jpg"
-```
-
-## Compatibility wrappers
-
-Legacy scripts in `scripts/` are still available and now delegate to `wallctl`:
-
-- `scripts/set-managed-wallpaper.sh`
-- `scripts/verify-managed-wallpaper.sh`
-- `scripts/watch-managed-wallpaper.sh`
-- `scripts/restore-original-managed-wallpaper.sh`
-
-## Exit codes
-
-- `0`: success
-- `1`: usage/input error
-- `2`: permission/policy blocked
-- `3`: apply attempted but verification failed
+This repository intentionally does **not** include bundled wallpaper images.
+Provide your own local file path when using `wallctl`.
 
 ## Uninstall
 
