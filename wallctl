@@ -114,6 +114,17 @@ default_wallpaper_path() {
   printf '%s\n' "$p"
 }
 
+workspace_default_candidate() {
+  local hit
+  hit="$(
+    find "$SCRIPT_DIR" -maxdepth 1 -type f \
+      \( -iname '*cchs*desktop*wallpaper*default*.jpg' -o -iname '*cchs*desktop*wallpaper*default*.jpeg' -o -iname '*cchs*desktop*wallpaper*default*.png' -o -iname '*cchs*desktop*wallpaper*default*.webp' -o -iname '*cchs*desktop*wallpaper*default*.heic' -o -iname '*cchs*desktop*wallpaper*default*.tif' -o -iname '*cchs*desktop*wallpaper*default*.tiff' \) \
+      | sort | head -n 1
+  )"
+  [[ -n "$hit" ]] || return 1
+  printf '%s\n' "$hit"
+}
+
 find_school_default_candidate() {
   # Detection priority is deterministic so first-run capture is predictable.
   managed_state
@@ -166,17 +177,25 @@ find_school_default_candidate() {
 }
 
 capture_default_wallpaper_if_missing() {
+  local workspace_default
+  workspace_default="$(workspace_default_candidate 2>/dev/null || true)"
+
   local existing
   existing="$(default_wallpaper_path 2>/dev/null || true)"
-  if [[ -n "$existing" && -f "$existing" ]]; then
-    printf '%s\n' "$existing"
-    return 0
-  fi
 
   ensure_state_dir || return 1
 
-  local candidate
-  candidate="$(find_school_default_candidate 2>/dev/null || true)"
+  local candidate=""
+  # Prefer the original wallpaper file shipped in this workspace when present.
+  if [[ -n "$workspace_default" && -f "$workspace_default" ]] && validate_image_readable "$workspace_default"; then
+    candidate="$workspace_default"
+  elif [[ -n "$existing" && -f "$existing" ]]; then
+    printf '%s\n' "$existing"
+    return 0
+  else
+    candidate="$(find_school_default_candidate 2>/dev/null || true)"
+  fi
+
   if [[ -z "$candidate" || ! -f "$candidate" ]]; then
     err "could not find a default wallpaper candidate"
     return 1
@@ -185,6 +204,7 @@ capture_default_wallpaper_if_missing() {
   local ext out captured_at
   ext="$(file_ext_lower "$candidate")"
   out="$DEFAULT_DIR/default-school-wallpaper.$ext"
+  find "$DEFAULT_DIR" -maxdepth 1 -type f -name 'default-school-wallpaper.*' ! -name "default-school-wallpaper.$ext" -delete 2>/dev/null || true
   cp -f "$candidate" "$out" || {
     err "failed to cache detected default wallpaper: $candidate"
     return 1
