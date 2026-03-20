@@ -24,6 +24,14 @@ POLICY_PLIST="${WALLCTL_POLICY_PLIST:-/Library/Managed Preferences/$POLICY_USER/
 
 QUIET=0
 
+UI_RESET=""
+UI_BOLD=""
+UI_DIM=""
+UI_CYAN=""
+UI_GREEN=""
+UI_YELLOW=""
+UI_RED=""
+
 log() {
   if [[ "$QUIET" -eq 0 ]]; then
     printf '%s\n' "$*"
@@ -36,6 +44,53 @@ err() {
 
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+ui_init_styles() {
+  if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+    local colors
+    colors="$(tput colors 2>/dev/null || echo 0)"
+    if [[ "$colors" =~ '^[0-9]+$' ]] && (( colors >= 8 )); then
+      UI_RESET="$(tput sgr0)"
+      UI_BOLD="$(tput bold)"
+      UI_DIM="$(tput dim)"
+      UI_CYAN="$(tput setaf 6)"
+      UI_GREEN="$(tput setaf 2)"
+      UI_YELLOW="$(tput setaf 3)"
+      UI_RED="$(tput setaf 1)"
+      return 0
+    fi
+  fi
+  UI_RESET=""
+  UI_BOLD=""
+  UI_DIM=""
+  UI_CYAN=""
+  UI_GREEN=""
+  UI_YELLOW=""
+  UI_RED=""
+}
+
+ui_hr() {
+  printf '%s\n' "------------------------------------------------------------"
+}
+
+ui_banner() {
+  printf '%s\n' "${UI_CYAN}${UI_BOLD}██╗    ██╗ █████╗ ██╗     ██╗     ██████╗████████╗██╗${UI_RESET}"
+  printf '%s\n' "${UI_CYAN}${UI_BOLD}██║    ██║██╔══██╗██║     ██║    ██╔════╝╚══██╔══╝██║${UI_RESET}"
+  printf '%s\n' "${UI_CYAN}${UI_BOLD}██║ █╗ ██║███████║██║     ██║    ██║        ██║   ██║${UI_RESET}"
+  printf '%s\n' "${UI_CYAN}${UI_BOLD}██║███╗██║██╔══██║██║     ██║    ██║        ██║   ██║${UI_RESET}"
+  printf '%s\n' "${UI_CYAN}${UI_BOLD}╚███╔███╔╝██║  ██║███████╗███████╗╚██████╗   ██║   ███████╗${UI_RESET}"
+  printf '%s\n' "${UI_CYAN}${UI_BOLD} ╚══╝╚══╝ ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝   ╚═╝   ╚══════╝${UI_RESET}"
+  printf '\n'
+  printf '%s\n' "${UI_DIM}Portable macOS wallpaper CLI${UI_RESET}"
+}
+
+ui_menu() {
+  ui_hr
+  printf '%s\n' "${UI_BOLD}Actions${UI_RESET}"
+  printf '%s\n' "  ${UI_GREEN}[1]${UI_RESET} Restore default wallpaper"
+  printf '%s\n' "  ${UI_GREEN}[2]${UI_RESET} Set a new wallpaper"
+  ui_hr
 }
 
 require_cmds() {
@@ -578,22 +633,25 @@ cmd_interactive() {
     return $EXIT_USAGE
   fi
 
-  printf 'Select an option:\n\n'
-  printf '1. Restore default wallpaper\n'
-  printf '2. Set a new wallpaper\n\n'
-  printf 'Enter choice [1-2]: '
+  ui_init_styles
+  printf '\n'
+  ui_banner
+  printf '\n'
+  ui_menu
+  printf '%s' "${UI_BOLD}Enter choice [1-2]: ${UI_RESET}"
   IFS= read -r choice
   choice="${choice#"${choice%%[![:space:]]*}"}"
   choice="${choice%"${choice##*[![:space:]]}"}"
 
   case "$choice" in
     1)
+      printf '\n%s\n' "${UI_CYAN}${UI_BOLD}Restoring default wallpaper...${UI_RESET}"
       cmd_restore_default --force-refresh
       rc=$?
       if [[ "$rc" -eq "$EXIT_BLOCKED" ]]; then
         managed_state
         if [[ "$MANAGED_LOCKED" -eq 1 && -n "$MANAGED_OVERRIDE_PATH" ]]; then
-          printf 'Managed policy detected. Retry with sudo-managed copy? [Y/n]: '
+          printf '%s' "${UI_YELLOW}Managed policy detected.${UI_RESET} Retry with sudo-managed copy? [Y/n]: "
           local ans
           IFS= read -r ans
           case "${ans:l}" in
@@ -607,7 +665,7 @@ cmd_interactive() {
       return "$rc"
       ;;
     2)
-      printf 'Enter image file or directory path: '
+      printf '\n%s' "${UI_BOLD}Enter image file or directory path:${UI_RESET} "
       IFS= read -r input
       input="${input#"${input%%[![:space:]]*}"}"
       input="${input%"${input##*[![:space:]]}"}"
@@ -624,7 +682,7 @@ cmd_interactive() {
 
       managed_state
       if [[ "$rc" -eq "$EXIT_BLOCKED" && "$MANAGED_LOCKED" -eq 1 && -n "$MANAGED_OVERRIDE_PATH" ]]; then
-        printf 'Managed policy detected. Retry with sudo-managed copy? [Y/n]: '
+        printf '%s' "${UI_YELLOW}Managed policy detected.${UI_RESET} Retry with sudo-managed copy? [Y/n]: "
         local ans
         IFS= read -r ans
         case "${ans:l}" in
@@ -637,6 +695,7 @@ cmd_interactive() {
       return "$rc"
       ;;
     *)
+      printf '\n'
       err "invalid choice: ${choice:-<empty>}"
       return $EXIT_USAGE
       ;;
