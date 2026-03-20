@@ -13,6 +13,12 @@ chmod +x wallctl build.sh install.sh uninstall.sh
 ```
 
 `install.sh` will install the built artifact from `dist/wallctl` when available.
+If `/usr/local/bin` is not writable, it installs to `~/.local/bin` and auto-adds that path to your shell profile.
+For the current terminal session, run:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 ## Quick Start
 
